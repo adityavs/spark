@@ -18,7 +18,9 @@
 package org.apache.spark.sql.catalyst.trees
 
 import org.apache.spark.SparkFunSuite
+import org.apache.spark.sql.catalyst.errors.TreeNodeException
 import org.apache.spark.sql.catalyst.expressions.{Expression, IntegerLiteral, Literal}
+import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.rules.{Rule, RuleExecutor}
 
 class RuleExecutorSuite extends SparkFunSuite {
@@ -49,6 +51,50 @@ class RuleExecutorSuite extends SparkFunSuite {
       val batches = Batch("fixedPoint", FixedPoint(10), DecrementLiterals) :: Nil
     }
 
-    assert(ToFixedPoint.execute(Literal(100)) === Literal(90))
+    val message = intercept[TreeNodeException[LogicalPlan]] {
+      ToFixedPoint.execute(Literal(100))
+    }.getMessage
+    assert(message.contains("Max iterations (10) reached for batch fixedPoint"))
+  }
+
+  test("structural integrity checker - verify initial input") {
+    object WithSIChecker extends RuleExecutor[Expression] {
+      override protected def isPlanIntegral(expr: Expression): Boolean = expr match {
+        case IntegerLiteral(_) => true
+        case _ => false
+      }
+      val batches = Batch("once", Once, DecrementLiterals) :: Nil
+    }
+
+    assert(WithSIChecker.execute(Literal(10)) === Literal(9))
+
+    val message = intercept[TreeNodeException[LogicalPlan]] {
+      // The input is already invalid as determined by WithSIChecker.isPlanIntegral
+      WithSIChecker.execute(Literal(10.1))
+    }.getMessage
+    assert(message.contains("The structural integrity of the input plan is broken"))
+  }
+
+  test("structural integrity checker - verify rule execution result") {
+    object WithSICheckerForPositiveLiteral extends RuleExecutor[Expression] {
+      override protected def isPlanIntegral(expr: Expression): Boolean = expr match {
+        case IntegerLiteral(i) if i > 0 => true
+        case _ => false
+      }
+      val batches = Batch("once", Once, DecrementLiterals) :: Nil
+    }
+
+    assert(WithSICheckerForPositiveLiteral.execute(Literal(2)) === Literal(1))
+
+    val message = intercept[TreeNodeException[LogicalPlan]] {
+      WithSICheckerForPositiveLiteral.execute(Literal(1))
+    }.getMessage
+    assert(message.contains("the structural integrity of the plan is broken"))
+  }
+
+  test("SPARK-27243: dumpTimeSpent when no rule has run") {
+    RuleExecutor.resetMetrics()
+    // This should not throw an exception
+    RuleExecutor.dumpTimeSpent()
   }
 }

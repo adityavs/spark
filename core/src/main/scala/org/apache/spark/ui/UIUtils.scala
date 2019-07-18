@@ -17,22 +17,29 @@
 
 package org.apache.spark.ui
 
+import java.net.URLDecoder
 import java.text.SimpleDateFormat
-import java.util.{Locale, Date}
+import java.util.{Date, Locale, TimeZone}
+import javax.servlet.http.HttpServletRequest
+import javax.ws.rs.core.{MediaType, Response}
 
-import scala.xml.{Node, Text, Unparsed}
+import scala.util.control.NonFatal
+import scala.xml._
+import scala.xml.transform.{RewriteRule, RuleTransformer}
 
-import org.apache.spark.Logging
+import org.apache.spark.internal.Logging
 import org.apache.spark.ui.scope.RDDOperationGraph
 
 /** Utility functions for generating XML pages with spark content. */
 private[spark] object UIUtils extends Logging {
-  val TABLE_CLASS_NOT_STRIPED = "table table-bordered table-condensed sortable"
+  val TABLE_CLASS_NOT_STRIPED = "table table-bordered table-condensed"
   val TABLE_CLASS_STRIPED = TABLE_CLASS_NOT_STRIPED + " table-striped"
+  val TABLE_CLASS_STRIPED_SORTABLE = TABLE_CLASS_STRIPED + " sortable"
 
   // SimpleDateFormat is not thread-safe. Don't expose it to avoid improper use.
   private val dateFormat = new ThreadLocal[SimpleDateFormat]() {
-    override def initialValue(): SimpleDateFormat = new SimpleDateFormat("yyyy/MM/dd HH:mm:ss")
+    override def initialValue(): SimpleDateFormat =
+      new SimpleDateFormat("yyyy/MM/dd HH:mm:ss", Locale.US)
   }
 
   def formatDate(date: Date): String = dateFormat.get.format(date)
@@ -102,12 +109,12 @@ private[spark] object UIUtils extends Logging {
         }
       }
       // if time is more than a year
-      return s"$yearString $weekString $dayString"
+      s"$yearString $weekString $dayString"
     } catch {
       case e: Exception =>
         logError("Error converting time to string", e)
         // if there is some error, return blank string
-        return ""
+        ""
     }
   }
 
@@ -139,82 +146,111 @@ private[spark] object UIUtils extends Logging {
   }
 
   // Yarn has to go through a proxy so the base uri is provided and has to be on all links
-  def uiRoot: String = {
-    if (System.getenv("APPLICATION_WEB_PROXY_BASE") != null) {
-      System.getenv("APPLICATION_WEB_PROXY_BASE")
-    } else if (System.getProperty("spark.ui.proxyBase") != null) {
-      System.getProperty("spark.ui.proxyBase")
-    }
-    else {
-      ""
-    }
+  def uiRoot(request: HttpServletRequest): String = {
+    // Knox uses X-Forwarded-Context to notify the application the base path
+    val knoxBasePath = Option(request.getHeader("X-Forwarded-Context"))
+    // SPARK-11484 - Use the proxyBase set by the AM, if not found then use env.
+    sys.props.get("spark.ui.proxyBase")
+      .orElse(sys.env.get("APPLICATION_WEB_PROXY_BASE"))
+      .orElse(knoxBasePath)
+      .getOrElse("")
   }
 
-  def prependBaseUri(basePath: String = "", resource: String = ""): String = {
-    uiRoot + basePath + resource
+  def prependBaseUri(
+      request: HttpServletRequest,
+      basePath: String = "",
+      resource: String = ""): String = {
+    uiRoot(request) + basePath + resource
   }
 
-  def commonHeaderNodes: Seq[Node] = {
+  def commonHeaderNodes(request: HttpServletRequest): Seq[Node] = {
     <meta http-equiv="Content-type" content="text/html; charset=utf-8" />
-    <link rel="stylesheet" href={prependBaseUri("/static/bootstrap.min.css")} type="text/css"/>
-    <link rel="stylesheet" href={prependBaseUri("/static/vis.min.css")} type="text/css"/>
-    <link rel="stylesheet" href={prependBaseUri("/static/webui.css")} type="text/css"/>
-    <link rel="stylesheet" href={prependBaseUri("/static/timeline-view.css")} type="text/css"/>
-    <script src={prependBaseUri("/static/sorttable.js")} ></script>
-    <script src={prependBaseUri("/static/jquery-1.11.1.min.js")}></script>
-    <script src={prependBaseUri("/static/vis.min.js")}></script>
-    <script src={prependBaseUri("/static/bootstrap-tooltip.js")}></script>
-    <script src={prependBaseUri("/static/initialize-tooltips.js")}></script>
-    <script src={prependBaseUri("/static/table.js")}></script>
-    <script src={prependBaseUri("/static/additional-metrics.js")}></script>
-    <script src={prependBaseUri("/static/timeline-view.js")}></script>
+    <link rel="stylesheet"
+          href={prependBaseUri(request, "/static/bootstrap.min.css")} type="text/css"/>
+    <link rel="stylesheet" href={prependBaseUri(request, "/static/vis.min.css")} type="text/css"/>
+    <link rel="stylesheet" href={prependBaseUri(request, "/static/webui.css")} type="text/css"/>
+    <link rel="stylesheet"
+          href={prependBaseUri(request, "/static/timeline-view.css")} type="text/css"/>
+    <script src={prependBaseUri(request, "/static/sorttable.js")} ></script>
+    <script src={prependBaseUri(request, "/static/jquery-3.4.1.min.js")}></script>
+    <script src={prependBaseUri(request, "/static/vis.min.js")}></script>
+    <script src={prependBaseUri(request, "/static/bootstrap-tooltip.js")}></script>
+    <script src={prependBaseUri(request, "/static/initialize-tooltips.js")}></script>
+    <script src={prependBaseUri(request, "/static/table.js")}></script>
+    <script src={prependBaseUri(request, "/static/additional-metrics.js")}></script>
+    <script src={prependBaseUri(request, "/static/timeline-view.js")}></script>
+    <script src={prependBaseUri(request, "/static/log-view.js")}></script>
+    <script src={prependBaseUri(request, "/static/webui.js")}></script>
+    <script>setUIRoot('{UIUtils.uiRoot(request)}')</script>
   }
 
-  def vizHeaderNodes: Seq[Node] = {
-    <link rel="stylesheet" href={prependBaseUri("/static/spark-dag-viz.css")} type="text/css" />
-    <script src={prependBaseUri("/static/d3.min.js")}></script>
-    <script src={prependBaseUri("/static/dagre-d3.min.js")}></script>
-    <script src={prependBaseUri("/static/graphlib-dot.min.js")}></script>
-    <script src={prependBaseUri("/static/spark-dag-viz.js")}></script>
+  def vizHeaderNodes(request: HttpServletRequest): Seq[Node] = {
+    <link rel="stylesheet"
+          href={prependBaseUri(request, "/static/spark-dag-viz.css")} type="text/css" />
+    <script src={prependBaseUri(request, "/static/d3.min.js")}></script>
+    <script src={prependBaseUri(request, "/static/dagre-d3.min.js")}></script>
+    <script src={prependBaseUri(request, "/static/graphlib-dot.min.js")}></script>
+    <script src={prependBaseUri(request, "/static/spark-dag-viz.js")}></script>
+  }
+
+  def dataTablesHeaderNodes(request: HttpServletRequest): Seq[Node] = {
+    <link rel="stylesheet" href={prependBaseUri(request,
+      "/static/jquery.dataTables.1.10.18.min.css")} type="text/css"/>
+    <link rel="stylesheet"
+          href={prependBaseUri(request, "/static/dataTables.bootstrap.css")} type="text/css"/>
+    <link rel="stylesheet"
+          href={prependBaseUri(request, "/static/jsonFormatter.min.css")} type="text/css"/>
+    <link rel="stylesheet"
+          href={prependBaseUri(request, "/static/webui-dataTables.css")} type="text/css"/>
+    <script src={prependBaseUri(request, "/static/jquery.dataTables.1.10.18.min.js")}></script>
+    <script src={prependBaseUri(request, "/static/jquery.cookies.2.2.0.min.js")}></script>
+    <script src={prependBaseUri(request, "/static/jquery.blockUI.min.js")}></script>
+    <script src={prependBaseUri(request, "/static/dataTables.bootstrap.min.js")}></script>
+    <script src={prependBaseUri(request, "/static/jsonFormatter.min.js")}></script>
+    <script src={prependBaseUri(request, "/static/jquery.mustache.js")}></script>
   }
 
   /** Returns a spark page with correctly formatted headers */
   def headerSparkPage(
+      request: HttpServletRequest,
       title: String,
       content: => Seq[Node],
       activeTab: SparkUITab,
-      refreshInterval: Option[Int] = None,
       helpText: Option[String] = None,
-      showVisualization: Boolean = false): Seq[Node] = {
+      showVisualization: Boolean = false,
+      useDataTables: Boolean = false): Seq[Node] = {
 
     val appName = activeTab.appName
     val shortAppName = if (appName.length < 36) appName else appName.take(32) + "..."
     val header = activeTab.headerTabs.map { tab =>
       <li class={if (tab == activeTab) "active" else ""}>
-        <a href={prependBaseUri(activeTab.basePath, "/" + tab.prefix + "/")}>{tab.name}</a>
+        <a href={prependBaseUri(request, activeTab.basePath, "/" + tab.prefix + "/")}>{tab.name}</a>
       </li>
     }
     val helpButton: Seq[Node] = helpText.map(tooltip(_, "bottom")).getOrElse(Seq.empty)
 
     <html>
       <head>
-        {commonHeaderNodes}
-        {if (showVisualization) vizHeaderNodes else Seq.empty}
+        {commonHeaderNodes(request)}
+        {if (showVisualization) vizHeaderNodes(request) else Seq.empty}
+        {if (useDataTables) dataTablesHeaderNodes(request) else Seq.empty}
+        <link rel="shortcut icon"
+              href={prependBaseUri(request, "/static/spark-logo-77x50px-hd.png")}></link>
         <title>{appName} - {title}</title>
       </head>
       <body>
         <div class="navbar navbar-static-top">
           <div class="navbar-inner">
             <div class="brand">
-              <a href={prependBaseUri("/")} class="brand">
-                <img src={prependBaseUri("/static/spark-logo-77x50px-hd.png")} />
-                <span class="version">{org.apache.spark.SPARK_VERSION}</span>
+              <a href={prependBaseUri(request, "/")} class="brand">
+                <img src={prependBaseUri(request, "/static/spark-logo-77x50px-hd.png")} />
+                <span class="version">{activeTab.appSparkVersion}</span>
               </a>
             </div>
-            <ul class="nav">{header}</ul>
             <p class="navbar-text pull-right">
               <strong title={appName}>{shortAppName}</strong> application UI
             </p>
+            <ul class="nav">{header}</ul>
           </div>
         </div>
         <div class="container-fluid">
@@ -233,10 +269,17 @@ private[spark] object UIUtils extends Logging {
   }
 
   /** Returns a page with the spark css/js and a simple format. Used for scheduler UI. */
-  def basicSparkPage(content: => Seq[Node], title: String): Seq[Node] = {
+  def basicSparkPage(
+      request: HttpServletRequest,
+      content: => Seq[Node],
+      title: String,
+      useDataTables: Boolean = false): Seq[Node] = {
     <html>
       <head>
-        {commonHeaderNodes}
+        {commonHeaderNodes(request)}
+        {if (useDataTables) dataTablesHeaderNodes(request) else Seq.empty}
+        <link rel="shortcut icon"
+              href={prependBaseUri(request, "/static/spark-logo-77x50px-hd.png")}></link>
         <title>{title}</title>
       </head>
       <body>
@@ -244,8 +287,8 @@ private[spark] object UIUtils extends Logging {
           <div class="row-fluid">
             <div class="span12">
               <h3 style="vertical-align: middle; display: inline-block;">
-                <a style="text-decoration: none" href={prependBaseUri("/")}>
-                  <img src={prependBaseUri("/static/spark-logo-77x50px-hd.png")} />
+                <a style="text-decoration: none" href={prependBaseUri(request, "/")}>
+                  <img src={prependBaseUri(request, "/static/spark-logo-77x50px-hd.png")} />
                   <span class="version"
                         style="margin-right: 15px;">{org.apache.spark.SPARK_VERSION}</span>
                 </a>
@@ -267,9 +310,17 @@ private[spark] object UIUtils extends Logging {
       fixedWidth: Boolean = false,
       id: Option[String] = None,
       headerClasses: Seq[String] = Seq.empty,
-      stripeRowsWithCss: Boolean = true): Seq[Node] = {
+      stripeRowsWithCss: Boolean = true,
+      sortable: Boolean = true): Seq[Node] = {
 
-    val listingTableClass = if (stripeRowsWithCss) TABLE_CLASS_STRIPED else TABLE_CLASS_NOT_STRIPED
+    val listingTableClass = {
+      val _tableClass = if (stripeRowsWithCss) TABLE_CLASS_STRIPED else TABLE_CLASS_NOT_STRIPED
+      if (sortable) {
+        _tableClass + " sortable"
+      } else {
+        _tableClass
+      }
+    }
     val colWidth = 100.toDouble / headers.size
     val colWidthAttr = if (fixedWidth) colWidth + "%" else ""
 
@@ -285,7 +336,7 @@ private[spark] object UIUtils extends Logging {
     def getHeaderContent(header: String): Seq[Node] = {
       if (newlinesInHeader) {
         <ul class="unstyled">
-          { header.split("\n").map { case t => <li> {t} </li> } }
+          { header.split("\n").map(t => <li> {t} </li>) }
         </ul>
       } else {
         Text(header)
@@ -310,15 +361,24 @@ private[spark] object UIUtils extends Logging {
       completed: Int,
       failed: Int,
       skipped: Int,
+      reasonToNumKilled: Map[String, Int],
       total: Int): Seq[Node] = {
-    val completeWidth = "width: %s%%".format((completed.toDouble/total)*100)
-    val startWidth = "width: %s%%".format((started.toDouble/total)*100)
+    val ratio = if (total == 0) 100.0 else (completed.toDouble/total)*100
+    val completeWidth = "width: %s%%".format(ratio)
+    // started + completed can be > total when there are speculative tasks
+    val boundedStarted = math.min(started, total - completed)
+    val startWidth = "width: %s%%".format((boundedStarted.toDouble/total)*100)
 
     <div class="progress">
       <span style="text-align:center; position:absolute; width:100%; left:0;">
         {completed}/{total}
+        { if (failed == 0 && skipped == 0 && started > 0) s"($started running)" }
         { if (failed > 0) s"($failed failed)" }
         { if (skipped > 0) s"($skipped skipped)" }
+        { reasonToNumKilled.toSeq.sortBy(-_._2).map {
+            case (reason, count) => s"($count killed: $reason)"
+          }
+        }
       </span>
       <div class="bar bar-completed" style={completeWidth}></div>
       <div class="bar bar-running" style={startWidth}></div>
@@ -344,7 +404,8 @@ private[spark] object UIUtils extends Logging {
    */
   private def showDagViz(graphs: Seq[RDDOperationGraph], forJob: Boolean): Seq[Node] = {
     <div>
-      <span class="expand-dag-viz" onclick={s"toggleDagViz($forJob);"}>
+      <span id={if (forJob) "job-dag-viz" else "stage-dag-viz"}
+            class="expand-dag-viz" onclick={s"toggleDagViz($forJob);"}>
         <span class="expand-dag-viz-arrow arrow-closed"></span>
         <a data-toggle="tooltip" title={if (forJob) ToolTips.JOB_DAG else ToolTips.STAGE_DAG}
            data-placement="right">
@@ -379,11 +440,113 @@ private[spark] object UIUtils extends Logging {
     </sup>
   }
 
-  /** Return a script element that automatically expands the DAG visualization on page load. */
-  def expandDagVizOnLoad(forJob: Boolean): Seq[Node] = {
-    <script type="text/javascript">
-      {Unparsed("$(document).ready(function() { toggleDagViz(" + forJob + ") });")}
-    </script>
+  /**
+   * Returns HTML rendering of a job or stage description. It will try to parse the string as HTML
+   * and make sure that it only contains anchors with root-relative links. Otherwise,
+   * the whole string will rendered as a simple escaped text.
+   *
+   * Note: In terms of security, only anchor tags with root relative links are supported. So any
+   * attempts to embed links outside Spark UI, or other tags like &lt;script&gt; will cause in
+   * the whole description to be treated as plain text.
+   *
+   * @param desc        the original job or stage description string, which may contain html tags.
+   * @param basePathUri with which to prepend the relative links; this is used when plainText is
+   *                    false.
+   * @param plainText   whether to keep only plain text (i.e. remove html tags) from the original
+   *                    description string.
+   * @return the HTML rendering of the job or stage description, which will be a Text when plainText
+   *         is true, and an Elem otherwise.
+   */
+  def makeDescription(desc: String, basePathUri: String, plainText: Boolean = false): NodeSeq = {
+
+    // If the description can be parsed as HTML and has only relative links, then render
+    // as HTML, otherwise render as escaped string
+    try {
+      // Try to load the description as unescaped HTML
+      val xml = XML.loadString(s"""<span class="description-input">$desc</span>""")
+
+      // Verify that this has only anchors and span (we are wrapping in span)
+      val allowedNodeLabels = Set("a", "span", "br")
+      val illegalNodes = (xml \\ "_").filterNot(node => allowedNodeLabels.contains(node.label))
+      if (illegalNodes.nonEmpty) {
+        throw new IllegalArgumentException(
+          "Only HTML anchors allowed in job descriptions\n" +
+            illegalNodes.map { n => s"${n.label} in $n"}.mkString("\n\t"))
+      }
+
+      // Verify that all links are relative links starting with "/"
+      val allLinks =
+        xml \\ "a" flatMap { _.attributes } filter { _.key == "href" } map { _.value.toString }
+      if (allLinks.exists { ! _.startsWith ("/") }) {
+        throw new IllegalArgumentException(
+          "Links in job descriptions must be root-relative:\n" + allLinks.mkString("\n\t"))
+      }
+
+      val rule =
+        if (plainText) {
+          // Remove all tags, retaining only their texts
+          new RewriteRule() {
+            override def transform(n: Node): Seq[Node] = {
+              n match {
+                case e: Elem if e.child.isEmpty => Text(e.text)
+                case e: Elem => Text(e.child.flatMap(transform).text)
+                case _ => n
+              }
+            }
+          }
+        }
+        else {
+          // Prepend the relative links with basePathUri
+          new RewriteRule() {
+            override def transform(n: Node): Seq[Node] = {
+              n match {
+                case e: Elem if (e \ "@href").nonEmpty =>
+                  val relativePath = e.attribute("href").get.toString
+                  val fullUri = s"${basePathUri.stripSuffix("/")}/${relativePath.stripPrefix("/")}"
+                  e % Attribute(null, "href", fullUri, Null)
+                case _ => n
+              }
+            }
+          }
+        }
+      new RuleTransformer(rule).transform(xml)
+    } catch {
+      case NonFatal(e) =>
+        if (plainText) Text(desc) else <span class="description-input">{desc}</span>
+    }
   }
 
+  /**
+   * Decode URLParameter if URL is encoded by YARN-WebAppProxyServlet.
+   * Due to YARN-2844: WebAppProxyServlet cannot handle urls which contain encoded characters
+   * Therefore we need to decode it until we get the real URLParameter.
+   */
+  def decodeURLParameter(urlParam: String): String = {
+    var param = urlParam
+    var decodedParam = URLDecoder.decode(param, "UTF-8")
+    while (param != decodedParam) {
+      param = decodedParam
+      decodedParam = URLDecoder.decode(param, "UTF-8")
+    }
+    param
+  }
+
+  def getTimeZoneOffset() : Int =
+    TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 1000 / 60
+
+  /**
+  * Return the correct Href after checking if master is running in the
+  * reverse proxy mode or not.
+  */
+  def makeHref(proxy: Boolean, id: String, origHref: String): String = {
+    if (proxy) {
+      s"/proxy/$id"
+    } else {
+      origHref
+    }
+  }
+
+  def buildErrorResponse(status: Response.Status, msg: String): Response = {
+    Response.status(status).entity(msg).`type`(MediaType.TEXT_PLAIN).build()
+  }
 }

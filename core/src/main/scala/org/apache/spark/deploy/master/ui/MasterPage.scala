@@ -19,25 +19,21 @@ package org.apache.spark.deploy.master.ui
 
 import javax.servlet.http.HttpServletRequest
 
-import scala.concurrent.Await
 import scala.xml.Node
 
-import akka.pattern.ask
 import org.json4s.JValue
 
+import org.apache.spark.deploy.DeployMessages.{KillDriverResponse, MasterStateResponse, RequestKillDriver, RequestMasterState}
 import org.apache.spark.deploy.JsonProtocol
-import org.apache.spark.deploy.DeployMessages.{RequestKillDriver, MasterStateResponse, RequestMasterState}
 import org.apache.spark.deploy.master._
-import org.apache.spark.ui.{WebUIPage, UIUtils}
+import org.apache.spark.ui.{UIUtils, WebUIPage}
 import org.apache.spark.util.Utils
 
 private[ui] class MasterPage(parent: MasterWebUI) extends WebUIPage("") {
-  private val master = parent.masterActorRef
-  private val timeout = parent.timeout
+  private val master = parent.masterEndpointRef
 
   def getMasterState: MasterStateResponse = {
-    val stateFuture = (master ? RequestMasterState)(timeout).mapTo[MasterStateResponse]
-    Await.result(stateFuture, timeout)
+    master.askSync[MasterStateResponse](RequestMasterState)
   }
 
   override def renderJson(request: HttpServletRequest): JValue = {
@@ -53,7 +49,9 @@ private[ui] class MasterPage(parent: MasterWebUI) extends WebUIPage("") {
   }
 
   def handleDriverKillRequest(request: HttpServletRequest): Unit = {
-    handleKillRequest(request, id => { master ! RequestKillDriver(id) })
+    handleKillRequest(request, id => {
+      master.ask[KillDriverResponse](RequestKillDriver(id))
+    })
   }
 
   private def handleKillRequest(request: HttpServletRequest, action: String => Unit): Unit = {
@@ -78,7 +76,7 @@ private[ui] class MasterPage(parent: MasterWebUI) extends WebUIPage("") {
     val aliveWorkers = state.workers.filter(_.state == WorkerState.ALIVE)
     val workerTable = UIUtils.listingTable(workerHeaders, workerRow, workers)
 
-    val appHeaders = Seq("Application ID", "Name", "Cores", "Memory per Node", "Submitted Time",
+    val appHeaders = Seq("Application ID", "Name", "Cores", "Memory per Executor", "Submitted Time",
       "User", "State", "Duration")
     val activeApps = state.activeApps.sortBy(_.startTime).reverse
     val activeAppsTable = UIUtils.listingTable(appHeaders, appRow, activeApps)
@@ -109,18 +107,18 @@ private[ui] class MasterPage(parent: MasterWebUI) extends WebUIPage("") {
                   </li>
                 }.getOrElse { Seq.empty }
               }
-              <li><strong>Alive Workers:</strong> {aliveWorkers.size}</li>
+              <li><strong>Alive Workers:</strong> {aliveWorkers.length}</li>
               <li><strong>Cores in use:</strong> {aliveWorkers.map(_.cores).sum} Total,
                 {aliveWorkers.map(_.coresUsed).sum} Used</li>
               <li><strong>Memory in use:</strong>
                 {Utils.megabytesToString(aliveWorkers.map(_.memory).sum)} Total,
                 {Utils.megabytesToString(aliveWorkers.map(_.memoryUsed).sum)} Used</li>
               <li><strong>Applications:</strong>
-                {state.activeApps.size} Running,
-                {state.completedApps.size} Completed </li>
+                {state.activeApps.length} <a href="#running-app">Running</a>,
+                {state.completedApps.length} <a href="#completed-app">Completed</a> </li>
               <li><strong>Drivers:</strong>
-                {state.activeDrivers.size} Running,
-                {state.completedDrivers.size} Completed </li>
+                {state.activeDrivers.length} Running,
+                {state.completedDrivers.length} Completed </li>
               <li><strong>Status:</strong> {state.status}</li>
             </ul>
           </div>
@@ -128,15 +126,31 @@ private[ui] class MasterPage(parent: MasterWebUI) extends WebUIPage("") {
 
         <div class="row-fluid">
           <div class="span12">
-            <h4> Workers </h4>
-            {workerTable}
+            <span class="collapse-aggregated-workers collapse-table"
+                onClick="collapseTable('collapse-aggregated-workers','aggregated-workers')">
+              <h4>
+                <span class="collapse-table-arrow arrow-open"></span>
+                <a>Workers ({workers.length})</a>
+              </h4>
+            </span>
+            <div class="aggregated-workers collapsible-table">
+              {workerTable}
+            </div>
           </div>
         </div>
 
         <div class="row-fluid">
           <div class="span12">
-            <h4> Running Applications </h4>
-            {activeAppsTable}
+            <span id="running-app" class="collapse-aggregated-activeApps collapse-table"
+                onClick="collapseTable('collapse-aggregated-activeApps','aggregated-activeApps')">
+              <h4>
+                <span class="collapse-table-arrow arrow-open"></span>
+                <a>Running Applications ({activeApps.length})</a>
+              </h4>
+            </span>
+            <div class="aggregated-activeApps collapsible-table">
+              {activeAppsTable}
+            </div>
           </div>
         </div>
 
@@ -144,8 +158,17 @@ private[ui] class MasterPage(parent: MasterWebUI) extends WebUIPage("") {
           {if (hasDrivers) {
              <div class="row-fluid">
                <div class="span12">
-                 <h4> Running Drivers </h4>
-                 {activeDriversTable}
+                 <span class="collapse-aggregated-activeDrivers collapse-table"
+                     onClick="collapseTable('collapse-aggregated-activeDrivers',
+                     'aggregated-activeDrivers')">
+                   <h4>
+                     <span class="collapse-table-arrow arrow-open"></span>
+                     <a>Running Drivers ({activeDrivers.length})</a>
+                   </h4>
+                 </span>
+                 <div class="aggregated-activeDrivers collapsible-table">
+                   {activeDriversTable}
+                 </div>
                </div>
              </div>
            }
@@ -154,8 +177,17 @@ private[ui] class MasterPage(parent: MasterWebUI) extends WebUIPage("") {
 
         <div class="row-fluid">
           <div class="span12">
-            <h4> Completed Applications </h4>
-            {completedAppsTable}
+            <span id="completed-app" class="collapse-aggregated-completedApps collapse-table"
+                onClick="collapseTable('collapse-aggregated-completedApps',
+                'aggregated-completedApps')">
+              <h4>
+                <span class="collapse-table-arrow arrow-open"></span>
+                <a>Completed Applications ({completedApps.length})</a>
+              </h4>
+            </span>
+            <div class="aggregated-completedApps collapsible-table">
+              {completedAppsTable}
+            </div>
           </div>
         </div>
 
@@ -164,21 +196,38 @@ private[ui] class MasterPage(parent: MasterWebUI) extends WebUIPage("") {
             if (hasDrivers) {
               <div class="row-fluid">
                 <div class="span12">
-                  <h4> Completed Drivers </h4>
-                  {completedDriversTable}
+                  <span class="collapse-aggregated-completedDrivers collapse-table"
+                      onClick="collapseTable('collapse-aggregated-completedDrivers',
+                      'aggregated-completedDrivers')">
+                    <h4>
+                      <span class="collapse-table-arrow arrow-open"></span>
+                      <a>Completed Drivers ({completedDrivers.length})</a>
+                    </h4>
+                  </span>
+                  <div class="aggregated-completedDrivers collapsible-table">
+                    {completedDriversTable}
+                  </div>
                 </div>
               </div>
             }
           }
         </div>;
 
-    UIUtils.basicSparkPage(content, "Spark Master at " + state.uri)
+    UIUtils.basicSparkPage(request, content, "Spark Master at " + state.uri)
   }
 
   private def workerRow(worker: WorkerInfo): Seq[Node] = {
     <tr>
       <td>
-        <a href={worker.webUiAddress}>{worker.id}</a>
+        {
+          if (worker.isAlive()) {
+            <a href={UIUtils.makeHref(parent.master.reverseProxy, worker.id, worker.webUiAddress)}>
+              {worker.id}
+            </a>
+          } else {
+            worker.id
+          }
+        }
       </td>
       <td>{worker.host}:{worker.port}</td>
       <td>{worker.state}</td>
@@ -208,7 +257,14 @@ private[ui] class MasterPage(parent: MasterWebUI) extends WebUIPage("") {
         {killLink}
       </td>
       <td>
-        <a href={app.desc.appUiUrl}>{app.desc.name}</a>
+        {
+          if (app.isFinished) {
+            app.desc.name
+          } else {
+            <a href={UIUtils.makeHref(parent.master.reverseProxy,
+              app.id, app.desc.appUiUrl)}>{app.desc.name}</a>
+          }
+        }
       </td>
       <td>
         {app.coresGranted}
@@ -239,8 +295,15 @@ private[ui] class MasterPage(parent: MasterWebUI) extends WebUIPage("") {
     }
     <tr>
       <td>{driver.id} {killLink}</td>
-      <td>{driver.submitDate}</td>
-      <td>{driver.worker.map(w => <a href={w.webUiAddress}>{w.id.toString}</a>).getOrElse("None")}
+      <td>{UIUtils.formatDate(driver.submitDate)}</td>
+      <td>{driver.worker.map(w =>
+        if (w.isAlive()) {
+          <a href={UIUtils.makeHref(parent.master.reverseProxy, w.id, w.webUiAddress)}>
+            {w.id.toString}
+          </a>
+        } else {
+          w.id.toString
+        }).getOrElse("None")}
       </td>
       <td>{driver.state}</td>
       <td sorttable_customkey={driver.desc.cores.toString}>

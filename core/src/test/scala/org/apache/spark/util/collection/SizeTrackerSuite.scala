@@ -17,6 +17,8 @@
 
 package org.apache.spark.util.collection
 
+import java.util.concurrent.TimeUnit
+
 import scala.reflect.ClassTag
 import scala.util.Random
 
@@ -103,7 +105,9 @@ private object SizeTrackerSuite {
    */
   def main(args: Array[String]): Unit = {
     if (args.size < 1) {
+      // scalastyle:off println
       println("Usage: SizeTrackerSuite [num elements]")
+      // scalastyle:on println
       System.exit(1)
     }
     val numElements = args(0).toInt
@@ -180,17 +184,19 @@ private object SizeTrackerSuite {
       baseTimes: Seq[Long],
       sampledTimes: Seq[Long],
       unsampledTimes: Seq[Long]): Unit = {
+    // scalastyle:off println
     println(s"Average times for $testName (ms):")
     println("  Base - " + averageTime(baseTimes))
     println("  SizeTracker (sampled) - " + averageTime(sampledTimes))
     println("  SizeEstimator (unsampled) - " + averageTime(unsampledTimes))
     println()
+    // scalastyle:on println
   }
 
   def time(f: => Unit): Long = {
-    val start = System.currentTimeMillis()
+    val startNs = System.nanoTime()
     f
-    System.currentTimeMillis() - start
+    TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs)
   }
 
   def averageTime(v: Seq[Long]): Long = {

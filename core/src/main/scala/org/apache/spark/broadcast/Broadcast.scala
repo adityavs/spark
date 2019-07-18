@@ -19,11 +19,11 @@ package org.apache.spark.broadcast
 
 import java.io.Serializable
 
-import org.apache.spark.SparkException
-import org.apache.spark.Logging
-import org.apache.spark.util.Utils
-
 import scala.reflect.ClassTag
+
+import org.apache.spark.SparkException
+import org.apache.spark.internal.Logging
+import org.apache.spark.util.Utils
 
 /**
  * A broadcast variable. Broadcast variables allow the programmer to keep a read-only variable
@@ -92,10 +92,9 @@ abstract class Broadcast[T: ClassTag](val id: Long) extends Serializable with Lo
   /**
    * Destroy all data and metadata related to this broadcast variable. Use this with caution;
    * once a broadcast variable has been destroyed, it cannot be used again.
-   * This method blocks until destroy has completed
    */
   def destroy() {
-    destroy(blocking = true)
+    destroy(blocking = false)
   }
 
   /**

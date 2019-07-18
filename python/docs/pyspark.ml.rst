@@ -33,6 +33,22 @@ pyspark.ml.classification module
     :undoc-members:
     :inherited-members:
 
+pyspark.ml.clustering module
+----------------------------
+
+.. automodule:: pyspark.ml.clustering
+    :members:
+    :undoc-members:
+    :inherited-members:
+
+pyspark.ml.linalg module
+----------------------------
+
+.. automodule:: pyspark.ml.linalg
+    :members:
+    :undoc-members:
+    :inherited-members:
+
 pyspark.ml.recommendation module
 --------------------------------
 
@@ -49,6 +65,14 @@ pyspark.ml.regression module
     :undoc-members:
     :inherited-members:
 
+pyspark.ml.stat module
+----------------------
+
+.. automodule:: pyspark.ml.stat
+    :members:
+    :undoc-members:
+    :inherited-members:
+
 pyspark.ml.tuning module
 ------------------------
 
@@ -61,6 +85,30 @@ pyspark.ml.evaluation module
 ----------------------------
 
 .. automodule:: pyspark.ml.evaluation
+    :members:
+    :undoc-members:
+    :inherited-members:
+
+pyspark.ml.fpm module
+----------------------------
+
+.. automodule:: pyspark.ml.fpm
+    :members:
+    :undoc-members:
+    :inherited-members:
+
+pyspark.ml.image module
+----------------------------
+
+.. automodule:: pyspark.ml.image
+    :members:
+    :undoc-members:
+    :inherited-members:
+
+pyspark.ml.util module
+----------------------------
+
+.. automodule:: pyspark.ml.util
     :members:
     :undoc-members:
     :inherited-members:

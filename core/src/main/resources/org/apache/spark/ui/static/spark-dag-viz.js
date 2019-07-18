@@ -35,7 +35,7 @@
  * primitives (e.g. take, any SQL query).
  *
  * In the visualization, an RDD is expressed as a node, and its dependencies
- * as directed edges (from parent to child). operation scopes, stages, and
+ * as directed edges (from parent to child). Operation scopes, stages, and
  * jobs are expressed as clusters that may contain one or many nodes. These
  * clusters may be nested inside of each other in the scenarios described
  * above.
@@ -73,12 +73,23 @@ var StagePageVizConstants = {
 };
 
 /*
+ * Return "expand-dag-viz-arrow-job" if forJob is true.
+ * Otherwise, return "expand-dag-viz-arrow-stage".
+ */
+function expandDagVizArrowKey(forJob) {
+  return forJob ? "expand-dag-viz-arrow-job" : "expand-dag-viz-arrow-stage";
+}
+
+/*
  * Show or hide the RDD DAG visualization.
  *
  * The graph is only rendered the first time this is called.
  * This is the narrow interface called from the Scala UI code.
  */
 function toggleDagViz(forJob) {
+  var status = window.localStorage.getItem(expandDagVizArrowKey(forJob)) == "true";
+  status = !status;
+
   var arrowSelector = ".expand-dag-viz-arrow";
   $(arrowSelector).toggleClass('arrow-closed');
   $(arrowSelector).toggleClass('arrow-open');
@@ -93,7 +104,23 @@ function toggleDagViz(forJob) {
     // Save the graph for later so we don't have to render it again
     graphContainer().style("display", "none");
   }
+
+  window.localStorage.setItem(expandDagVizArrowKey(forJob), "" + status);
 }
+
+$(function (){
+  if ($("#stage-dag-viz").length &&
+      window.localStorage.getItem(expandDagVizArrowKey(false)) == "true") {
+    // Set it to false so that the click function can revert it
+    window.localStorage.setItem(expandDagVizArrowKey(false), "false");
+    toggleDagViz(false);
+  } else if ($("#job-dag-viz").length &&
+      window.localStorage.getItem(expandDagVizArrowKey(true)) == "true") {
+    // Set it to false so that the click function can revert it
+    window.localStorage.setItem(expandDagVizArrowKey(true), "false");
+    toggleDagViz(true);
+  }
+});
 
 /*
  * Render the RDD DAG visualization.
@@ -146,6 +173,7 @@ function renderDagViz(forJob) {
   });
 
   resizeSvg(svg);
+  interpretLineBreak(svg);
 }
 
 /* Render the RDD DAG visualization on the stage page. */
@@ -192,13 +220,14 @@ function renderDagVizForJob(svgContainer) {
     } else {
       // Link each graph to the corresponding stage page (TODO: handle stage attempts)
       // Use the link from the stage table so it also works for the history server
-      var attemptId = 0
+      var attemptId = 0;
       var stageLink = d3.select("#stage-" + stageId + "-" + attemptId)
         .select("a.name-link")
-        .attr("href") + "&expandDagViz=true";
+        .attr("href");
       container = svgContainer
         .append("a")
         .attr("xlink:href", stageLink)
+        .attr("onclick", "window.localStorage.setItem(expandDagVizArrowKey(false), true)")
         .append("g")
         .attr("id", containerId);
     }
@@ -207,7 +236,7 @@ function renderDagVizForJob(svgContainer) {
     // existing ones, taking into account the position and width of the last stage's
     // container. We do not need to do this for the first stage of this job.
     if (i > 0) {
-      var existingStages = svgContainer.selectAll("g.cluster.stage")
+      var existingStages = svgContainer.selectAll("g.cluster.stage");
       if (!existingStages.empty()) {
         var lastStage = d3.select(existingStages[0].pop());
         var lastStageWidth = toFloat(lastStage.select("rect").attr("width"));
@@ -257,7 +286,7 @@ function renderDot(dot, container, forJob) {
   renderer(container, g);
 
   // Find the stage cluster and mark it for styling and post-processing
-  container.selectAll("g.cluster[name*=\"Stage\"]").classed("stage", true);
+  container.selectAll("g.cluster[name^=\"Stage \"]").classed("stage", true);
 }
 
 /* -------------------- *
@@ -332,6 +361,27 @@ function resizeSvg(svg) {
   svg.attr("viewBox", startX + " " + startY + " " + width + " " + height)
      .attr("width", width)
      .attr("height", height);
+}
+
+/*
+ * Helper function to interpret line break for tag 'tspan'.
+ * For tag 'tspan', line break '/n' is display in UI as raw for both stage page and job page,
+ * here this function is to enable line break.
+ */
+function interpretLineBreak(svg) {
+  svg.selectAll("tspan").each(function() {
+    var node = d3.select(this);
+    var original = node[0][0].innerHTML;
+    if (original.indexOf("\\n") != -1) {
+      var arr = original.split("\\n");
+      var newNode = this.cloneNode(this);
+
+      node[0][0].innerHTML = arr[0];
+      newNode.innerHTML = arr[1];
+
+      this.parentNode.appendChild(newNode);
+    }
+  });
 }
 
 /*
@@ -442,15 +492,23 @@ function connectRDDs(fromRDDId, toRDDId, edgesContainer, svgContainer) {
   edgesContainer.append("path").datum(points).attr("d", line);
 }
 
+/*
+ * Replace `/n` with `<br/>`
+ */
+function replaceLineBreak(str) {
+    return str.replace("\\n", "<br/>");
+}
+
 /* (Job page only) Helper function to add tooltips for RDDs. */
 function addTooltipsForRDDs(svgContainer) {
   svgContainer.selectAll("g.node").each(function() {
     var node = d3.select(this);
-    var tooltipText = node.attr("name");
+    var tooltipText = replaceLineBreak(node.attr("name"));
     if (tooltipText) {
       node.select("circle")
         .attr("data-toggle", "tooltip")
         .attr("data-placement", "bottom")
+        .attr("data-html", "true") // to interpret line break, tooltipText is showing <circle> title
         .attr("title", tooltipText);
     }
     // Link tooltips for all nodes that belong to the same RDD

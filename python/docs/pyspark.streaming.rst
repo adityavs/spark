@@ -9,9 +9,9 @@ Module contents
     :undoc-members:
     :show-inheritance:
 
-pyspark.streaming.kafka module
-------------------------------
-.. automodule:: pyspark.streaming.kafka
+pyspark.streaming.kinesis module
+--------------------------------
+.. automodule:: pyspark.streaming.kinesis
     :members:
     :undoc-members:
     :show-inheritance:

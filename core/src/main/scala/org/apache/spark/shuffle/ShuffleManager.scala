@@ -17,7 +17,7 @@
 
 package org.apache.spark.shuffle
 
-import org.apache.spark.{TaskContext, ShuffleDependency}
+import org.apache.spark.{ShuffleDependency, TaskContext}
 
 /**
  * Pluggable interface for shuffle systems. A ShuffleManager is created in SparkEnv on the driver
@@ -28,6 +28,7 @@ import org.apache.spark.{TaskContext, ShuffleDependency}
  * boolean isDriver as parameters.
  */
 private[spark] trait ShuffleManager {
+
   /**
    * Register a shuffle with the manager and obtain a handle for it to pass to tasks.
    */
@@ -37,7 +38,11 @@ private[spark] trait ShuffleManager {
       dependency: ShuffleDependency[K, V, C]): ShuffleHandle
 
   /** Get a writer for a given partition. Called on executors by map tasks. */
-  def getWriter[K, V](handle: ShuffleHandle, mapId: Int, context: TaskContext): ShuffleWriter[K, V]
+  def getWriter[K, V](
+      handle: ShuffleHandle,
+      mapId: Int,
+      context: TaskContext,
+      metrics: ShuffleWriteMetricsReporter): ShuffleWriter[K, V]
 
   /**
    * Get a reader for a range of reduce partitions (startPartition to endPartition-1, inclusive).
@@ -47,12 +52,13 @@ private[spark] trait ShuffleManager {
       handle: ShuffleHandle,
       startPartition: Int,
       endPartition: Int,
-      context: TaskContext): ShuffleReader[K, C]
+      context: TaskContext,
+      metrics: ShuffleReadMetricsReporter): ShuffleReader[K, C]
 
   /**
-    * Remove a shuffle's metadata from the ShuffleManager.
-    * @return true if the metadata removed successfully, otherwise false.
-    */
+   * Remove a shuffle's metadata from the ShuffleManager.
+   * @return true if the metadata removed successfully, otherwise false.
+   */
   def unregisterShuffle(shuffleId: Int): Boolean
 
   /**
